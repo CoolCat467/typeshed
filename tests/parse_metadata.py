@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import re
+import urllib.parse
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,6 +31,8 @@ __all__ = [
 
 
 _STUBTEST_PLATFORM_MAPPING: Final = {"linux": "apt_dependencies", "darwin": "brew_dependencies", "win32": "choco_dependencies"}
+# Some older websites have a bad pattern of using query params for navigation.
+_QUERY_URL_ALLOWLIST = {"sourceware.org"}
 
 
 def _is_list_of_strings(obj: object) -> TypeGuard[list[str]]:
@@ -120,14 +123,27 @@ class StubMetadata:
     requires: Annotated[list[str], "The raw requirements as listed in METADATA.toml"]
     extra_description: str | None
     stub_distribution: Annotated[str, "The name under which the distribution is uploaded to PyPI"]
+    upstream_repository: Annotated[str, "The URL of the upstream repository"] | None
     obsolete_since: Annotated[str, "A string representing a specific version"] | None
     no_longer_updated: bool
     uploaded_to_pypi: Annotated[bool, "Whether or not a distribution is uploaded to PyPI"]
+    partial_stub: Annotated[bool, "Whether this is a partial type stub package as per PEP 561."]
     stubtest_settings: StubtestSettings
 
 
 _KNOWN_METADATA_FIELDS: Final = frozenset(
-    {"version", "requires", "extra_description", "stub_distribution", "obsolete_since", "no_longer_updated", "upload", "tool"}
+    {
+        "version",
+        "requires",
+        "extra_description",
+        "stub_distribution",
+        "upstream_repository",
+        "obsolete_since",
+        "no_longer_updated",
+        "upload",
+        "tool",
+        "partial_stub",
+    }
 )
 _KNOWN_METADATA_TOOL_FIELDS: Final = {
     "stubtest": {
@@ -184,12 +200,38 @@ def read_metadata(distribution: str) -> StubMetadata:
     else:
         stub_distribution = f"types-{distribution}"
 
+    upstream_repository: object = data.get("upstream_repository")
+    assert isinstance(upstream_repository, (str, type(None)))
+    if isinstance(upstream_repository, str):
+        parsed_url = urllib.parse.urlsplit(upstream_repository)
+        assert parsed_url.scheme == "https", f"{distribution}: URLs in the upstream_repository field should use https"
+        no_www_please = (
+            f"{distribution}: `World Wide Web` subdomain (`www.`) should be removed from URLs in the upstream_repository field"
+        )
+        assert not parsed_url.netloc.startswith("www."), no_www_please
+        no_query_params_please = (
+            f"{distribution}: Query params (`?`) should be removed from URLs in the upstream_repository field"
+        )
+        assert parsed_url.hostname in _QUERY_URL_ALLOWLIST or (not parsed_url.query), no_query_params_please
+        no_fragments_please = f"{distribution}: Fragments (`#`) should be removed from URLs in the upstream_repository field"
+        assert not parsed_url.fragment, no_fragments_please
+        if parsed_url.netloc == "github.com":
+            cleaned_url_path = parsed_url.path.strip("/")
+            num_url_path_parts = len(Path(cleaned_url_path).parts)
+            bad_github_url_msg = (
+                f"Invalid upstream_repository for {distribution!r}: "
+                "URLs for GitHub repositories always have two parts in their paths"
+            )
+            assert num_url_path_parts == 2, bad_github_url_msg
+
     obsolete_since: object = data.get("obsolete_since")
     assert isinstance(obsolete_since, (str, type(None)))
     no_longer_updated: object = data.get("no_longer_updated", False)
     assert type(no_longer_updated) is bool
     uploaded_to_pypi: object = data.get("upload", True)
     assert type(uploaded_to_pypi) is bool
+    partial_stub: object = data.get("partial_stub", True)
+    assert type(partial_stub) is bool
 
     empty_tools: dict[object, object] = {}
     tools_settings: object = data.get("tool", empty_tools)
@@ -206,9 +248,11 @@ def read_metadata(distribution: str) -> StubMetadata:
         requires=requires,
         extra_description=extra_description,
         stub_distribution=stub_distribution,
+        upstream_repository=upstream_repository,
         obsolete_since=obsolete_since,
         no_longer_updated=no_longer_updated,
         uploaded_to_pypi=uploaded_to_pypi,
+        partial_stub=partial_stub,
         stubtest_settings=read_stubtest_settings(distribution),
     )
 

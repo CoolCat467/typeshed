@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any, overload
 from typing_extensions import Final, Literal
 
+from openpyxl import _Decodable, _VisibilityType
 from openpyxl.cell.cell import Cell, _CellValue
 from openpyxl.formatting.formatting import ConditionalFormattingList
 from openpyxl.workbook.child import _WorkbookChild
@@ -23,25 +24,28 @@ from openpyxl.worksheet.views import SheetView, SheetViewList
 
 class Worksheet(_WorkbookChild):
     mime_type: str
-    BREAK_NONE: int
-    BREAK_ROW: int
-    BREAK_COLUMN: int
+    BREAK_NONE: Final = 0
+    BREAK_ROW: Final = 1
+    BREAK_COLUMN: Final = 2
+
     SHEETSTATE_VISIBLE: Final = "visible"
     SHEETSTATE_HIDDEN: Final = "hidden"
     SHEETSTATE_VERYHIDDEN: Final = "veryHidden"
-    PAPERSIZE_LETTER: str
-    PAPERSIZE_LETTER_SMALL: str
-    PAPERSIZE_TABLOID: str
-    PAPERSIZE_LEDGER: str
-    PAPERSIZE_LEGAL: str
-    PAPERSIZE_STATEMENT: str
-    PAPERSIZE_EXECUTIVE: str
-    PAPERSIZE_A3: str
-    PAPERSIZE_A4: str
-    PAPERSIZE_A4_SMALL: str
-    PAPERSIZE_A5: str
-    ORIENTATION_PORTRAIT: str
-    ORIENTATION_LANDSCAPE: str
+
+    PAPERSIZE_LETTER: Final = "1"
+    PAPERSIZE_LETTER_SMALL: Final = "2"
+    PAPERSIZE_TABLOID: Final = "3"
+    PAPERSIZE_LEDGER: Final = "4"
+    PAPERSIZE_LEGAL: Final = "5"
+    PAPERSIZE_STATEMENT: Final = "6"
+    PAPERSIZE_EXECUTIVE: Final = "7"
+    PAPERSIZE_A3: Final = "8"
+    PAPERSIZE_A4: Final = "9"
+    PAPERSIZE_A4_SMALL: Final = "10"
+    PAPERSIZE_A5: Final = "11"
+
+    ORIENTATION_PORTRAIT: Final = "portrait"
+    ORIENTATION_LANDSCAPE: Final = "landscape"
 
     row_dimensions: DimensionHolder[RowDimension]
     column_dimensions: DimensionHolder[ColumnDimension]
@@ -49,7 +53,7 @@ class Worksheet(_WorkbookChild):
     col_breaks: ColBreak
     merged_cells: MultiCellRange
     data_validations: DataValidationList
-    sheet_state: Literal["visible", "hidden", "veryHidden"]
+    sheet_state: _VisibilityType
     page_setup: PrintPageSetup
     print_options: PrintOptions
     page_margins: PageMargins
@@ -63,7 +67,7 @@ class Worksheet(_WorkbookChild):
     sheet_format: SheetFormatProperties
     scenarios: ScenarioList
 
-    def __init__(self, parent: Workbook, title: str | None = None) -> None: ...
+    def __init__(self, parent: Workbook, title: str | _Decodable | None = None) -> None: ...
     @property
     def sheet_view(self) -> SheetView: ...
     @property
