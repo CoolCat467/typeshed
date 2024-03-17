@@ -12,13 +12,18 @@ from pathlib import Path
 from textwrap import dedent
 from typing import NoReturn
 
-from parse_metadata import get_recursive_requirements, read_metadata
-from utils import colored, get_mypy_req, make_venv, print_error, print_success_msg
+from parse_metadata import NoSuchStubError, get_recursive_requirements, read_metadata
+from utils import PYTHON_VERSION, colored, get_mypy_req, print_error, print_success_msg
 
 
-def run_stubtest(dist: Path, *, verbose: bool = False, specified_platforms_only: bool = False) -> bool:
+def run_stubtest(
+    dist: Path, *, parser: argparse.ArgumentParser, verbose: bool = False, specified_platforms_only: bool = False
+) -> bool:
     dist_name = dist.name
-    metadata = read_metadata(dist_name)
+    try:
+        metadata = read_metadata(dist_name)
+    except NoSuchStubError as e:
+        parser.error(str(e))
     print(f"{dist_name}... ", end="")
 
     stubtest_settings = metadata.stubtest_settings
@@ -32,19 +37,29 @@ def run_stubtest(dist: Path, *, verbose: bool = False, specified_platforms_only:
             return True
         print(colored(f"Note: {dist_name} is not currently tested on {sys.platform} in typeshed's CI.", "yellow"))
 
+    if not metadata.requires_python.contains(PYTHON_VERSION):
+        print(colored(f"skipping (requires Python {metadata.requires_python})", "yellow"))
+        return True
+
     with tempfile.TemporaryDirectory() as tmp:
         venv_dir = Path(tmp)
         try:
-            pip_exe, python_exe = make_venv(venv_dir)
-        except Exception:
-            print_error("fail")
-            raise
+            subprocess.run(["uv", "venv", venv_dir, "--seed"], capture_output=True, check=True)
+        except subprocess.CalledProcessError as e:
+            print_command_failure("Failed to create a virtualenv (likely a bug in uv?)", e)
+            return False
+        if sys.platform == "win32":
+            pip_exe = str(venv_dir / "Scripts" / "pip.exe")
+            python_exe = str(venv_dir / "Scripts" / "python.exe")
+        else:
+            pip_exe = str(venv_dir / "bin" / "pip")
+            python_exe = str(venv_dir / "bin" / "python")
         dist_extras = ", ".join(stubtest_settings.extras)
         dist_req = f"{dist_name}[{dist_extras}]=={metadata.version}"
 
         # If tool.stubtest.stubtest_requirements exists, run "pip install" on it.
         if stubtest_settings.stubtest_requirements:
-            pip_cmd = [pip_exe, "install"] + stubtest_settings.stubtest_requirements
+            pip_cmd = [pip_exe, "install", *stubtest_settings.stubtest_requirements]
             try:
                 subprocess.run(pip_cmd, check=True, capture_output=True)
             except subprocess.CalledProcessError as e:
@@ -58,7 +73,7 @@ def run_stubtest(dist: Path, *, verbose: bool = False, specified_platforms_only:
         # TODO: Maybe find a way to cache these in CI
         dists_to_install = [dist_req, get_mypy_req()]
         dists_to_install.extend(requirements.external_pkgs)  # Internal requirements are added to MYPYPATH
-        pip_cmd = [pip_exe, "install"] + dists_to_install
+        pip_cmd = [pip_exe, "install", *dists_to_install]
         try:
             subprocess.run(pip_cmd, check=True, capture_output=True)
         except subprocess.CalledProcessError as e:
@@ -110,6 +125,10 @@ def run_stubtest(dist: Path, *, verbose: bool = False, specified_platforms_only:
             print_commands(dist, pip_cmd, stubtest_cmd, mypypath)
             print_command_output(e)
 
+            print("Python version: ", file=sys.stderr)
+            ret = subprocess.run([sys.executable, "-VV"], capture_output=True)
+            print_command_output(ret)
+
             print("Ran with the following environment:", file=sys.stderr)
             ret = subprocess.run([pip_exe, "freeze", "--all"], capture_output=True)
             print_command_output(ret)
@@ -121,7 +140,7 @@ def run_stubtest(dist: Path, *, verbose: bool = False, specified_platforms_only:
                 print(file=sys.stderr)
             else:
                 print(f"Re-running stubtest with --generate-allowlist.\nAdd the following to {allowlist_path}:", file=sys.stderr)
-                ret = subprocess.run(stubtest_cmd + ["--generate-allowlist"], env=stubtest_env, capture_output=True)
+                ret = subprocess.run([*stubtest_cmd, "--generate-allowlist"], env=stubtest_env, capture_output=True)
                 print_command_output(ret)
 
             return False
@@ -253,7 +272,7 @@ def main() -> NoReturn:
     for i, dist in enumerate(dists):
         if i % args.num_shards != args.shard_index:
             continue
-        if not run_stubtest(dist, verbose=args.verbose, specified_platforms_only=args.specified_platforms_only):
+        if not run_stubtest(dist, parser=parser, verbose=args.verbose, specified_platforms_only=args.specified_platforms_only):
             result = 1
     sys.exit(result)
 
